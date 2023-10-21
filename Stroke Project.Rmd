@@ -1,0 +1,537 @@
+---
+title: "DMV Project"
+author: "2501961022_Sharon Zefanya Setiawan"
+date: '2022-07-15'
+output: html_document
+---
+
+Attribute Information
+
+1) id: unique identifier
+
+2) gender: "Male", "Female" or "Other"
+
+3) age: age of the patient
+
+4) hypertension: 0 if the patient doesn't have hypertension, 1 if the patient has hypertension
+
+5) heart_disease: 0 if the patient doesn't have any heart diseases, 1 if the patient has a heart disease
+
+6) ever_married: "No" or "Yes"
+
+7) work_type: "children", "Govt_jov", "Never_worked", "Private" or "Self-employed"
+
+8) Residence_type: "Rural" or "Urban"
+
+9) avg_glucose_level: average glucose level in blood
+
+10) bmi: body mass index
+
+11) smoking_status: "formerly smoked", "never smoked", "smokes" or "Unknown"*
+
+12) stroke: 1 if the patient had a stroke or 0 if not
+
+*Note: "Unknown" in smoking_status means that the information is unavailable for this patient
+
+
+```{r}
+getwd()
+```
+
+# 1. EXPLORATORY DATA ANALYSIS
+```{r}
+# load libraries
+library(tidyverse)
+library(dplyr)
+library(ggcorrplot)
+library(gridExtra)
+library(caret)
+library(Hmisc)
+library(car)
+library(ROCR)
+library(rpart)
+library(rpart.plot)
+library(openintro)
+
+
+# read data
+strokedf = read_csv("StrokeData.csv", na = "N/A")
+
+# overview
+head(strokedf)
+```
+
+```{r}
+# check records
+dim(strokedf)
+```
+
+__PENJELASAN__
+
+Terdapat 5110 data observasi dan 12 atribut
+
+```{r}
+# check variables
+names(strokedf)
+```
+
+__PENJELASAN__
+
+Data "id" tidak memiliki arti, sehingga boleh dibuang saat Data Preparation.
+
+```{r}
+# check data types
+sapply(strokedf, class)
+```
+
+__PENJELASAN__
+
+Terdapat 7 data numeric dan 5 data character.
+
+```{r}
+# convert char data types to factor
+strokedf <- as.data.frame(unclass(strokedf), stringsAsFactors = TRUE)
+sapply(strokedf, class)
+```
+
+__PENJELASAN__
+
+Karena data yang bertipe character di atas termasuk data categorical, maka bisa diubah menjadi factor.
+
+```{r}
+# check unique values
+sapply(strokedf, function(x) length(unique(x)))
+```
+
+__PENJELASAN__
+
+- Total data unique di atribut "id" sama dengan total data observasi.
+- "avg_glucose_level", "bmi", dan "age" memiliki data unique yang cukup banyak.
+- Selain atribut yang telah disebutkan, semuanya memiliki sedikit data yang unique.
+
+```{r}
+# check each unique values in factor data types
+lapply(strokedf, function(x) table(x[is.factor(x)==TRUE]))
+```
+
+__PENJELASAN__
+
+- Variabel "other" pada atribut gender tidak dapat didefinisikan, sehingga datanya bisa dihapus saat Data Preparation
+- Variabel "unknown" pada atribut smoking_status tidak dapat didefinisikan, namun datanya lebih dari 5% sehingga tidak bisa diignore
+
+```{r}
+# check duplicated data
+sum(duplicated(strokedf))
+```
+
+__PENJELASAN__
+
+Tidak ada data yang terduplikasi
+
+```{r}
+# check missing values
+colSums(is.na(strokedf))
+```
+
+__PENJELASAN__
+
+Terdapat 201 missing value pada atribut bmi
+
+```{r}
+# drop missing values
+strokedf<- strokedf[!is.na(strokedf$bmi), ]
+colSums(is.na(strokedf))
+```
+
+__PENJELASAN__
+
+Tidak ada missing value pada dataset stroke
+
+
+```{r}
+# check descriptive statistics
+BasicSummary <- function(strokedf, dgts = 3){
+
+m <- ncol(strokedf)
+varNames <- colnames(strokedf)
+varType <- vector("character",m)
+topLevel <- vector("character",m)
+topCount <- vector("numeric",m)
+missCount <- vector("numeric",m)
+levels <- vector("numeric", m)
+
+for (i in 1:m){
+x <- strokedf[,i]
+varType[i] <- class(strokedf)
+xtab <- table(x, useNA = "ifany")
+levels[i] <- length(xtab)
+nums <- as.numeric(xtab)
+maxnum <- max(nums)
+topCount[i] <- maxnum
+maxIndex <- which.max(nums)
+lvls <- names(xtab)
+topLevel[i] <- lvls[maxIndex]
+missIndex <- which((is.na(x)) | (x == "") | (x == " "))
+missCount[i] <- length(missIndex)
+}
+n <- nrow(strokedf)
+topFrac <- round(topCount/n, digits = dgts)
+missFrac <- round(missCount/n, digits = dgts)
+## #
+summaryFrame <- data.frame(variable = varNames, type = varType,
+ levels = levels, topLevel = topLevel,
+ topCount = topCount, topFrac = topFrac,
+ missFreq = missCount, missFrac = missFrac)
+ return(summaryFrame)
+ }
+
+BasicSummary(strokedf)
+```
+
+__PENJELASAN__
+
+Modus terbanyak ada pada atribut "stroke" dengan variabel 0 dan total 4700 data, yang artinya banyak data orang yang tidak mengalami stroke. Sedangkan, modus paling sedikit adalah atribut "id" dengan total hanya 1 data karena setiap datanya tidak ada yang unique.
+
+```{r}
+# examining summary statistics
+  ## compute mean
+sapply(strokedf[, c(3, 9, 10)], mean)
+```
+
+__PENJELASAN__
+
+Rata-rata pada "age" adalah 42.86537, pada "avg_glucose_level" adalah 105.30515, sedangkan pada "bmi" adalah 28.89324
+
+```{r}
+  ## compute quantile
+sapply(strokedf[, c(3, 9, 10)], quantile)
+```
+
+__PENJELASAN__
+
+Jarak dari setiap quantile yang paling tidak konsisten adalah bmi.
+
+```{r}
+# examine exploratory visualizations 
+  # univariate analysis
+plot1 <- ggplot(strokedf) + geom_histogram(aes(x=age), fill="hotpink3", col="white", binwidth=10) + labs(title="Everyone's Age", x='Age', y='Population')
+plot2 <- ggplot(strokedf) + geom_histogram(aes(x=bmi), fill="indianred3", col="white", binwidth=5) + labs(title="BMI Data of People", x="BMI", y="Population")
+plot3 <- ggplot(strokedf) + geom_bar(aes(x=smoking_status), fill="darkgray", col="white") + labs(title="Everyone's Smoking Status", x="Smoking Status", y="Population") + scale_x_discrete(guide = guide_axis(n.dodge = 2))
+plot4 <- ggplot(strokedf) + geom_bar(aes(x=as.factor(stroke)), fill="skyblue3", col="white") + labs(title="Stroke Data of People", x="Stroke", y="Population")
+
+grid.arrange(plot1, plot2, plot3, plot4, nrow=2)
+```
+
+__PENJELASAN__
+
+Kebanyakan orang pada data berumur 50, dengan bmi kurang lebih 25, tidak merokok, dan tidak terkena penyakit stroke.
+
+```{r}
+# look for data anomalies
+  ## qqPlot
+qqPlot(strokedf$bmi)
+```
+
+__PENJELASAN__
+
+qqPlot menunjukkan bahwa data merupakan right-skewed data, yang artinya datanya cenderung positif pada normal distribusi.
+
+```{r}
+# function
+ThreeSigma <- function(x){
+ mn <- mean(x, na.rm=TRUE)
+ std <- sd(x, na.rm=TRUE)
+ 
+ up <- mn + 3 * std
+ down <- mn - 3 * std
+ out <- list(up=up, down=down, mn=mn, std=std)
+ return(out)
+}
+
+Hampel <- function(x){
+
+ med <- median(x, na.rm = TRUE)
+ mad <- mad(x, na.rm = TRUE)
+ 
+ up <- med + 3 * mad
+ down <- med - 3 * mad
+ out <- list(up=up, down=down, med=med, mad=mad)
+ return(out)
+ }
+   
+BoxplotRule<- function(x){
+
+ q1 <- quantile(x, na.rm=TRUE, probs=0.25, names=FALSE)
+ q3 <- quantile(x, na.rm=TRUE, probs=0.75, names=FALSE)
+ range <- q3 - q1
+ 
+ up <- q1 + 1.5 * range
+ down <- q1 - 1.5 * range
+ out <- list(up=up, down=down, r=range)
+ return(out)
+} 
+
+# plotting
+par(mfrow=c(1,3))
+
+s_bmi <- strokedf$bmi
+ts <- ThreeSigma(s_bmi)
+hi <- Hampel(s_bmi)
+br <- BoxplotRule(s_bmi)
+
+plot(s_bmi, main="Three Sigma Rule", ylab="BMI", col="paleturquoise3", ylim=c(-10, 100))
+abline(h=hi$med, lty=2, col="blue") # mid
+abline(h=ts$up, lty=3, lwd=3, col="red") # upper
+abline(h=ts$down, lty=3, lwd=3, col="red") # lower
+
+plot(s_bmi, main="Hampel Identifier", ylab="BMI", col="palevioletred3", ylim=c(-10, 100))
+abline(h=hi$med, lty=2, col="blue") # mid
+abline(h=hi$up, lty=3, lwd=3, col="red") # upper
+abline(h=hi$down, lty=3, lwd=3, col="red") # lower
+
+boxplot(s_bmi, main="Boxplot Rule", ylab="BMI", col="palegreen3", ylim=c(-10, 100))
+
+# count
+outTS <- abs(s_bmi - ts$mn) > 3 * ts$std
+cat("Outliers Three Sigma Rule: ", sum(outTS), "\n")
+
+outHI <- abs(s_bmi - hi$med) > 3 * hi$mad
+cat("Outliers Hampel Identifier: ", sum(outHI), "\n")
+
+outBP <- boxplot.stats(s_bmi)$out
+cat("Outliers Boxplot Rule: ", length(outBP), "\n")
+```
+
+__PENJELASAN__
+
+Hampel Identifier memiliki identifier paling baik karena tidak mendeteksi terlalu banyak maupun terlalu sedikit outlier.
+
+```{r}
+# look relations between key variables
+  ## bivariate analysis
+plot1 <- ggplot(strokedf, aes(x=as.factor(hypertension), fill=as.factor(stroke))) + geom_bar(position="fill") + labs(title="Hypertension vs Stroke", x="Hypertension", fill="Stroke") + scale_fill_manual(values=c("olivedrab4", "orange")) + theme(plot.title = element_text(size=10, face="bold"))
+
+plot2 <- ggplot(strokedf, aes(x=as.factor(heart_disease), fill=as.factor(stroke))) + geom_bar(position="fill") + labs(title="Heart Disease vs Stroke", x="Heart Disease", fill="Stroke") +  scale_fill_manual(values=c("salmon4", "salmon3")) + theme(plot.title = element_text(size=10, face="bold"))
+
+plot3 <- ggplot(strokedf, aes(x=Residence_type, fill=as.factor(stroke))) + geom_bar(position="fill") + labs(title="Residence Type vs Stroke", x="Residence Type", fill="Stroke") +  scale_fill_manual(values=c("peachpuff4", "peachpuff3")) + theme(plot.title = element_text(size=10, face="bold"))
+
+plot4 <- ggplot(strokedf, aes(x=work_type, fill=as.factor(stroke))) + geom_bar(position="fill") + labs(title="Work Type vs Stroke", x="Work Type", fill="Stroke") +  scale_fill_manual(values=c("mediumpurple4", "mediumseagreen")) + scale_x_discrete(guide = guide_axis(angle=90)) + theme(plot.title = element_text(size=10, face="bold"))
+
+plot5 <- ggplot(strokedf, aes(x=ever_married, fill=as.factor(stroke))) + geom_bar(position="fill") + labs(title="Married Type vs Stroke", x="Ever Married", fill="Stroke") +  scale_fill_manual(values=c("mediumblue", "mediumorchid")) + theme(plot.title = element_text(size=10, face="bold"))
+
+plot6 <- ggplot(strokedf, aes(x=smoking_status, fill=as.factor(stroke))) + geom_bar(position="fill") + labs(title="Smoking Status vs Stroke", x="Smoking Status", fill="Stroke") +  scale_fill_manual(values=c("slateblue4", "slategray")) + scale_x_discrete(guide = guide_axis(angle=90)) + theme(plot.title = element_text(size=10, face="bold"))
+
+grid.arrange(plot1, plot2, plot3, plot4, plot5, plot6, ncol=3)
+```
+
+__PENJELASAN__
+
+- Orang yang memiliki hipertensi tinggi lebih rawan terkena stroke dibanding yang tidak hipertensi
+- Orang yang memiliki penyakit jantung lebih memungkinkan untuk terkena stroke dibandingkan yang tidak memiliki penyakit jantung
+- Tidak ada perbedaan antara orang yang tinggal di pedesaan dan perkotaan
+- Anak-anak dan orang-orang yang tidak bekerja jarang yang terkena stroke, sedangkan jika mereka bekerja sebagai wiraswasta, mereka lebih rawan terkena stroke
+- Orang-orang yang pernah menikah lebih rentan terkena stroke dibandingkan yang belom menikah
+- Orang-orang yang dulunya pernah merokok ataupun yang masih merokok lebih memungkinkan untuk terkena stroke dibangingkan yang belum pernah merokok.
+
+```{r}
+  ## multivariate analysis
+ggplot(strokedf, aes(x=as.factor(stroke), y=avg_glucose_level)) + geom_jitter(aes(color=gender), width=.2) + labs(title="Relationship Between Stroke and Average Glucose Level by Gender", x="Stroke", y="Glucose Level (avg)") +  scale_color_manual(values=c("Female" = "mediumvioletred", "Male" = "midnightblue", "Other" = "mediumspringgreen")) + theme(plot.title = element_text(face="bold"))
+```
+
+__PENJELASAN__
+
+Rata-rata orang-orang dengan jenis kelamin pria maupun wanita kurang lebih sama-sama bisa terkena stroke. Namun, orang-orang dengan average glucose level sekitar 125-175 lebih kurang berpeluang untuk terkena stroke, entah itu pria ataupun wanita.
+
+```{r}
+# check correlation
+strokenum <- strokedf[c(3, 9, 10, 12)]
+numcorr <- cor(strokenum, use="everything", method="spearman")
+ggcorrplot(numcorr, lab=TRUE) + labs(title="Correlation Between Numerical Variables")
+```
+
+__PENJELASAN__
+
+- Tidak ada hubungan yang kuat antara variabel stroke dengan variabel numerik lainnya
+- Hubungan yang paling kuat adalah antara "stroke" dan "age"
+- Hubungan antarvariabel independen yang paling kuat adalah "bmi" dan "age"
+
+```{r}
+# check normality
+hist.data.frame(strokenum)
+```
+
+__PENJELASAN__
+
+- "age" tidak berdistribusi normal
+- "avg_glucose_level" sedikit menyerupai bell curve dan cenderung memiliki kemiringan ke kanan
+- "bmi" berdistribusi normal dan memiliki kemiringan positif
+
+```{r}
+# check linearity
+plot(strokenum)
+```
+
+__PENJELASAN__
+
+Tidak ada korelasi yang baik antara setiap variabel. 
+
+# 2. DATA PREPARATION
+```{r}
+# remove id, gender, residence type
+strokeData <- subset(strokedf, select = c(-1, -2, -8))
+head(strokeData)
+```
+
+```{r}
+dim(strokeData)
+```
+
+```{r}
+# split data into training and validation
+set.seed(1)
+val_idx <- createDataPartition(strokedf$stroke, p=0.8, list=FALSE)
+validation <- strokeData[-val_idx,] 
+train <- strokeData[val_idx,] 
+
+# check dimension
+cat("Training Set: ", dim(train), "\n")
+cat("Testing Set: ", dim(validation), "\n")
+```
+
+___Based on the results of data preparation, what are the most important features on your dataset? Why?___
+The stroke itself is the quality that matters most, in my opinion. It seems to reason that we cannot forecast what influences stroke the most if there is no stroke feature (predictor).
+
+# 3. MODELLING
+```{r}
+fit1 <- glm(stroke ~.,family = binomial(link = "logit"), data = train)
+summary(fit1)
+```
+
+__PENJELASAN__
+
+Korelasi yang kuat ada pada "age" dan "avg_glucose_level"
+
+```{r}
+fit2 <- glm(stroke ~ age + avg_glucose_level, family = binomial(link = "logit"), data = train)
+summary(fit2)
+```
+
+__PENJELASAN__
+
+Model terbaik adalah fit2 karena semua independen variabelnya memiliki korelasi kuat dengan variabel dependen (stroke). Namun, residual deviance masih perlu dipertimbangkan karena valuenya lebih besar daripada fit1.
+
+```{r}
+# evaluation
+predictionlogistic <- predict(fit2, validation, type ="response")
+eval <- prediction(predictionlogistic, validation$stroke)
+prf <- performance(eval, measure = "tpr", x.measure = "fpr")
+plot(prf)
+```
+
+__PENJELASAN__
+
+Meskipun TPR masih mendekati 1 dan FPR hampir mendekati 0, hasil plot kurang terlihat stabil. Namun, dapat dikatakan modelling masih bisa dipertimbangkan dan cukup baik.
+
+```{r}
+# check auc score
+auc <- performance(eval, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+```
+
+__PENJELASAN__
+
+Hasil AUC Score mendekati 1, dimana artinya modelling sudah cukup baik.
+
+```{r}
+# check accuracy
+result <- ifelse(predictionlogistic > 0.5, 1, 0)
+misclassificationError <- mean(result!=validation$stroke)
+print(paste("Accuracy: ", 1-misclassificationError))
+```
+
+__PENJELASAN__
+
+Hasil accuracy dengan AUC sedikit berbeda, namun perbedaan tidak terlalu jauh, sehingga model masih tergolong cukup baik.
+
+```{r}
+# decision tree model
+set.seed(1)
+val_idx2 <- createDataPartition(strokedf$stroke, p=0.8, list=FALSE)
+validationDT <- strokeData[-val_idx2,] 
+trainDT <- strokeData[val_idx2,] 
+
+# check dimension
+cat("Training Set: ", dim(trainDT), "\n")
+cat("Testing Set: ", dim(validationDT), "\n")
+```
+```{r}
+modelDT <- rpart(stroke ~., data = trainDT, method = "class", cp = 0.001)
+modelDT
+```
+
+```{r}
+rpart.plot(modelDT)
+```
+
+__PENJELASAN__
+
+- Ada 8 variabel yang berpengaruh, salah satunya adalah "age" (root)
+- Jika umur seseorang kurang dari 65, maka probabilty terkena stroke adalah 84%
+- Jika umur seseorang diantara 68-79 dengan rata-rata gula darah kurang dari 127 dan sudah pernah menikah, maka kemungkinan terkena stroke adalah 8%
+- Jika umur seseorang diantara 68-79 dengan rata-rata gula darah kurang dari 127, belum pernah menikah, dan memiliki bmi lebih dari sama dengan 25, maka kemungkinan terkena stroke adalah 1% 
+- Jika umur seseorang diantara 68-79 dengan rata-rata gula darah kurang dari 127, belum pernah menikah, dan memiliki bmi kurang dari 25, maka orang tersebut tidak memiliki kemungkinan untuk terkena stroke (probability = 0%)
+
+```{r}
+modelDT$variable.importance
+```
+
+__PENJELASAN__
+
+Ada 8 yariabel yang berpengaruh, yaitu umur, rata-rata gula darah, bmi, hipertensi, tipe pekerjaan, status merokok, penyakit jantung, riwayat menikah.
+
+```{r}
+# confusion matrix
+predictionDT <- predict(modelDT, validationDT, type = "class")
+cfm <- table(predictionDT, validationDT$stroke)
+cfm
+```
+
+__PENJELASAN__
+
+- True Positive = 4
+- False Negative = 38 (error)
+- True Negative = 925
+- False Positive = 14 (error)
+
+```{r}
+# accuracy
+acc = sum(diag(cfm))/sum(cfm)
+acc
+```
+
+__PENJELASAN__
+
+Ketepatan akurasi data dari model adalah 0.94
+
+```{r}
+# misclassification accuracy
+msac = 1-acc
+msac
+```
+
+__PENJELASAN__
+
+Perkiraan error pada model adalah 0.05
+
+```{r}
+# model's overall accuracy (percentage)
+print(paste0("Accuracy: ", signif(acc*100, digits=3), "%"))
+
+# model's misclassification accuracy (percentage)
+print(paste0("Misclassification Accuracy: ", signif(msac*100, digits=2), "%"))
+```
+
+__KESIMPULAN__
+
+Dengan tingkat accuracy yang terlalu tinggi dan misclassifiation accuracy sebesar 5%, saya akan mencoba mencari tahu lebih dalam lagi apakah model benar-benar akurat. Oleh karena itu, saya mendeploy project ini dengan tujuan agar masyarakat dapat memvalidasi dan meningkatkan hasil project ini. Terlebih, model fit2 memiliki residual deviance yang lebih tinggi dibandingkan fit1. Padahal, dengan residual deviance yang semakin rendah, artinya model semakin baik.
